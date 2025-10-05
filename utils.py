@@ -404,7 +404,6 @@ def unified_call_inproc(
         method = get_route_method(function_name)
 
     url = f"{base_url}/{function_name}"
-    
     try:
         if method.lower() == "get":
             response = _inproc_request("get", url, params=kwargs)

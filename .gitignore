@@ -13,7 +13,7 @@ checkpoint/
 search/
 simulation_results/
 data_release/
-
+.txt
 # Distribution / packaging
 .Python
 build/

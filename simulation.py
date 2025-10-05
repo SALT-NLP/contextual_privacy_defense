@@ -79,35 +79,8 @@ def run_single_experiment(args: Tuple[str, str, int, int, str]) -> None:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_list", nargs="+", choices=["azure/gpt-4o-mini-240718-13576", \
-                                                            "azure/gpt-4.1-mini-250414-13576", \
-                                                            "azure/gpt-4.1-nano-250414-13576", \
-                                                            "azure/gpt-4.1-250414-13576", \
-                                                            "vertex_ai/gemini-2.0-flash-001", \
-                                                            "vertex_ai/gemini-2.5-flash", \
-                                                            "vertex_ai/gemini-2.5-pro", \
-                                                            "vertex_ai/claude-sonnet-4@20250514", \
-                                                            "vertex_ai/claude-3-5-haiku@20241022", \
-                                                            "gpt-4.1", \
-                                                            "gpt-4.1-mini", \
-                                                            "gpt-4.1-nano", \
-                                                            "gpt-4o-mini", \
-                                                            "hosted_vllm/Qwen/Qwen3-8B-AWQ", \
-                                                            "hosted_vllm/Qwen/Qwen3-32B-AWQ", \
-                                                            "hosted_vllm/Qwen/Qwen3-32B-AWQ-Thinking", \
-                                                            "hosted_vllm/Qwen/Qwen3-30B-A3B-Instruct-2507-FP8", \
-                                                            "hosted_vllm/openai/gpt-oss-20b", \
-                                                            "hosted_vllm/openai/gpt-oss-20b-low", \
-                                                            "hosted_vllm/openai/gpt-oss-20b-medium", \
-                                                            "hosted_vllm/openai/gpt-oss-20b-high", \
-                                                            "hosted_vllm/openai/gpt-oss-120b", \
-                                                            "hosted_vllm/openai/gpt-oss-120b-low", \
-                                                            "hosted_vllm/openai/gpt-oss-120b-medium", \
-                                                            "hosted_vllm/openai/gpt-oss-120b-high" \
-                                                            ], \
-                                                            default=["azure/gpt-4.1-mini-250414-13576", \
-                                                                     "azure/gpt-4.1-mini-250414-13576", \
-                                                                     "azure/gpt-4.1-mini-250414-13576"])
+    parser.add_argument("--model_list", nargs="+", choices=["azure/gpt-5-mini-250807-65987", "azure/gpt-5-nano-250807-65987","azure/gpt-4.1-mini-250414-65987", "azure/gpt-4.1-nano-250414-65987", "gemini/gemini-2.5-flash"], \
+            default=["azure/gpt-4.1-nano-250414-65987", "azure/gpt-4.1-nano-250414-65987", "azure/gpt-4.1-nano-250414-65987"])
     parser.add_argument("--duration", type=int, default=240)
     parser.add_argument("--minimal-action-taken", type=int, default=5)
     parser.add_argument("--version", type=str, default="v1")
@@ -286,5 +259,8 @@ if __name__ == "__main__":
     # Run all appless experiments in parallel
     if args.appless and all_exp_params:
         print(f"Running {len(all_exp_params)} experiments in parallel using {min(args.num_processes, len(all_exp_params))} processes")
-        with multiprocessing.Pool(processes=min(args.num_processes, len(all_exp_params))) as pool:
-            list(tqdm(pool.imap(run_single_experiment, all_exp_params), total=len(all_exp_params), desc="Running experiments"))
+        # do not use multiprocessing for debugging
+        for exp_params in tqdm(all_exp_params, desc="Running experiments", total=len(all_exp_params)):
+            run_single_experiment(exp_params)
+        # with multiprocessing.Pool(processes=min(args.num_processes, len(all_exp_params))) as pool:
+        #     list(tqdm(pool.imap(run_single_experiment, all_exp_params), total=len(all_exp_params), desc="Running experiments"))

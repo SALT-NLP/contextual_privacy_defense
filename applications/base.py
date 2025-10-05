@@ -130,7 +130,7 @@ class InprocAppClient(AppClient):
         """Helper method to try login or signup with an app"""
         result = self.call_app_function(app_name, "login", username=username, password=password)
         # If login fails, 401 error, try signup
-        if result["status"] == "error" and "401" in result["message"]:
+        if "status" in result and result["status"] == "error" and "401" in result["message"]:
             result = self.call_app_function(app_name, "signup", user_id=user_id, username=username, password=password)
         return result
 
