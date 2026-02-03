@@ -225,7 +225,8 @@ unsloth_compiled_cache
 *.ipynb
 *.csv
 *plot*
-example_generation
+example_generation/M*
+example_generation/e*/
 recipes/accelerate_configs
 mem_visualizer.py
 organize_config.py
