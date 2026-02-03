@@ -72,7 +72,8 @@ class Gmail(Application):
             subject: str,
             body: str,
             cc_address: Optional[str] = None,
-            bcc_address: Optional[str] = None
+            bcc_address: Optional[str] = None,
+            block: bool = False,
         ) -> Dict:
             """
             Send an email to one or multiple recipients, with optional scheduling, cc, and bcc.
@@ -84,10 +85,13 @@ class Gmail(Application):
                 bcc_address (str, optional): A string of bcc'ed email addresses, separated by commas. Default is None.
                 subject (str): The email subject.
                 body (str): The email body.
+                block (bool): This should not be passed as a parameter by the user. It is set by guard agent.
 
             Returns:
                 success (bool): Whether the email was sent successfully.
             """
+            if block:
+                return {"error": "This e-mail is blocked because it leads to privacy violation and was blocked by the guard agent."}
             user = self._get_user_by_token(token)
             if not user:
                 raise HTTPException(status_code=401, detail="Invalid token")

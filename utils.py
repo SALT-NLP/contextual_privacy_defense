@@ -125,8 +125,7 @@ def remove_comments(response_content: str) -> str:
 
 
 def parse_response(response_content: str) -> dict:
-    response_content = response_content.strip()
-
+    response_content = response_content.split('</think>')[-1].strip()
     # 1. Strip code fences
     if "```json" in response_content:
         m = re.search(r'```json(.*?)```', response_content, re.DOTALL)
@@ -241,36 +240,37 @@ def retry(max_retries=5, initial_delay=1, backoff_factor=2, exceptions=(Exceptio
     """
     A universal retry decorator with increasing delay, supporting both sync and async functions.
     """
+
     def decorator(func):
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
             delay = initial_delay
-            for attempt in range(max_retries + 1):
+            for attempt in range(min(5, max_retries) + 1):
                 try:
                     return await func(*args, **kwargs)
                 except exceptions as e:
                     if attempt < max_retries:
                         total_delay = delay + random.uniform(0, delay * 0.1) if jitter else delay
                         print(
-                            f"Retry {attempt + 1} of {max_retries} after error: {e}. Waiting {total_delay} seconds...")
+                            f"Async Retry {attempt + 1} of {min(5, max_retries)} after error: {e}. Waiting {total_delay} seconds...")
                         await asyncio.sleep(total_delay)
-                        delay *= backoff_factor
+                        # delay *= backoff_factor
                     else:
                         raise  # Re-raise the last exception if max retries exceeded
 
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
             delay = initial_delay
-            for attempt in range(max_retries + 1):
+            for attempt in range(min(5, max_retries) + 1):
                 try:
                     return func(*args, **kwargs)
                 except exceptions as e:
                     if attempt < max_retries:
                         total_delay = delay + random.uniform(0, delay * 0.1) if jitter else delay
                         print(
-                            f"Retry {attempt + 1} of {max_retries} after error: {e}. Waiting {total_delay} seconds...")
+                            f"Sync Retry {attempt + 1} of {min(5, max_retries)} after error: {e}. Waiting {total_delay} seconds...")
                         time.sleep(total_delay)
-                        delay *= backoff_factor
+                        # delay *= backoff_factor
                     else:
                         raise  # Re-raise the last exception if max retries exceeded
 
@@ -318,7 +318,7 @@ async def unified_call(
     base_url: str,
     function_name: str,
     method: Optional[str] = None,
-    timeout: float = 60.0,
+    timeout: float = 600.0,
     **kwargs: Any
 ) -> Dict:
     """
@@ -394,7 +394,7 @@ def unified_call_inproc(
     base_url: str,
     function_name: str,
     method: str = None,
-    timeout: float = 60.0,
+    timeout: float = 600.0,
     **kwargs: Dict
 ) -> Dict:
     """
@@ -576,7 +576,8 @@ def parse_log_file(log_content, agent_id):
             if len(current_cycle) > 0:
                 cycles.append(parse_cycle(current_cycle, agent_id, trigger))
             else:
-                print("Empty cycle:", line)
+                pass
+                # print("Empty cycle:", line)
             current_cycle = []
     return cycles
 
@@ -647,7 +648,51 @@ def ensure_microseconds(ts: str) -> str:
     frac = m.group(3) or ""
     frac = (frac + "000000")[:6]
     return f"{base}.{frac}"
-
+def transform_tool_call_to_activity_log(item: Dict, user_name: str) -> Dict:
+    # Email case
+    user_name = user_name.lower().replace(" ", "_")
+    if "to_address" in item:
+        return {
+            "description": f"New email.",
+            "app_name": "Gmail",
+            "action": "send_email",
+            "user_id": user_name,
+            "involved_user_ids": [item["to_address"].split("@")[0]],
+            "details": {
+                "to_address": item["to_address"],
+                "subject": item.get("subject", ""),
+                "body": item.get("body", ""),
+                "cc_address": item.get("cc_address", ""),
+                "bcc_address": item.get("bcc_address", ""),
+            },
+        }
+    # Message case
+    if "recipient_id" in item:
+        return {
+            "description": f"New message.",
+            "app_name": "Messenger",
+            "action": "send_message",
+            "user_id": user_name,
+            "involved_user_ids": [item["recipient_id"]],
+            "details": {
+                "recipient_id": item["recipient_id"],
+                "message": item.get("message", ""),
+            },
+        }
+    # Post case
+    if "content" in item:
+        return {
+            "description": f"New post.",
+            "app_name": "Facebook",
+            "action": "create_post",
+            "user_id": user_name,
+            "involved_user_ids": ["all"],
+            "details": {
+                "content": item["content"],
+            },
+        }
+    print(item)
+    raise ValueError("Unknown item type")
 
 def transform_to_activity_log(item):
     """
@@ -730,7 +775,7 @@ def read_activities(db_dir: str, return_action_cycles=False) -> List[str]:
                     if db.get("emails"):
                         for item in db["emails"].values():
                             activities.append(transform_to_activity_log(item))
-
+    #print(f"Loaded {len(activities)} activities from {db_dir}")
     activities.sort(key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f") if "." in x["timestamp"] else datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S"))
 
     action_cycles = load_action_cycles(db_dir, return_action_cycles)
@@ -778,7 +823,7 @@ def read_activities(db_dir: str, return_action_cycles=False) -> List[str]:
                     cycle_contains_activity = action_cycles[cycle_idx]["contains_activity"]
                     if user_id in current_involved_user_ids or "all" in current_involved_user_ids:
                         if not cycle_contains_activity:
-                            print("Added activity: ", db_dir)
+#                            print("Added activity: ", db_dir)
                             extended_activities.append(
                                 {
                                     "description": f"No response to {reachout_user_id} on {reachout_application}",
@@ -894,6 +939,23 @@ def wait_for_condition_inproc(url: str, **kwargs):
         time.sleep(2)
     raise TimeoutError(f"{url}: condition {kwargs} not met after {timeout}s")
 
+def process_str_to_json(content: str) -> Any:
+    result = None
+    try:
+        result = ast.literal_eval(content)
+    except Exception as e:
+        pass
+    #    print(f"Error processing content: {e}")
+    if result:
+        return result
+    try:
+        result = json.loads(content)
+    except Exception as e:
+        print(f"Error processing content as JSON: {e} - Content: {content}")
+    if result:
+        return result
+    return content
+
 async def get_info(url: str):
     async with httpx.AsyncClient() as client:
         try:
@@ -907,5 +969,5 @@ if __name__ == "__main__":
     # activities = read_activities("./simulation_results/example_search_train_resample/results/example_v1/example_16/log_0")
     # print("\n\n".join([json.dumps(activity, indent=4) for activity in activities]))
 
-    activities = read_activities("./simulation_results/example_search_train_resample_qwen/results/example_v1/example_16/log_0", True)
+    activities = read_activities("logs-M3-qinstruct/example_v0/example_16/log_0")
     print("\n\n".join([json.dumps(activity, indent=4) for activity in activities]))

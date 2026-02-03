@@ -1,48 +1,46 @@
-# [Searching for Privacy Risks in LLM Agents via Simulation](https://arxiv.org/abs/2508.10880)
+# [Contextualized Privacy Defense for LLM Agents]
 
-**Authors:** Yanzhe Zhang, Diyi Yang
+**Authors:** Yule Wen, Yanzhe Zhang, Jianxun Lian, Xiaoyuan Yi, Xing Xie, Diyi Yang
 
 ## Abstract
 
-The widespread deployment of LLM-based agents is likely to introduce a critical privacy threat: malicious agents that proactively engage others in multi-turn interactions to extract sensitive information. These dynamic dialogues enable adaptive attack strategies that can cause severe privacy violations, yet their evolving nature makes it difficult to anticipate and discover sophisticated vulnerabilities manually. To tackle this problem, we present a search-based framework that alternates between improving attacker and defender instructions by simulating privacy-critical agent interactions. Each simulation involves three roles: data subject, data sender, and data recipient. While the data subject's behavior is fixed, the attacker (data recipient) attempts to extract sensitive information from the defender (data sender) through persistent and interactive exchanges. To explore this interaction space efficiently, our search algorithm employs LLMs as optimizers, using parallel search with multiple threads and cross-thread propagation to analyze simulation trajectories and iteratively propose new instructions. Through this process, we find that attack strategies escalate from simple direct requests to sophisticated multi-turn tactics such as impersonation and consent forgery, while defenses advance from rule-based constraints to identity-verification state machines. The discovered attacks and defenses transfer across diverse scenarios and backbone models, demonstrating strong practical utility for building privacy-aware agents.
-
-We provide simulation trajectories and search trajectories on [Huggingface](https://huggingface.co/datasets/SALT-NLP/search_privacy_risk).
+Abstract LLM agents increasingly act on users’ personal information, yet existing privacy defenses remain limited in both design and adaptability. Most prior approaches rely on static or passive defenses, such as prompting and guarding. These paradigms are insufficient for supporting contextual, proactive privacy decisions in multi-step agent execution. We propose Contextualized Defense Instructing (CDI), a new privacy defense paradigm in which an instructor model generates step-specific, context-aware privacy guidance during execution, proactively shaping actions rather than merely constraining or vetoing them. Crucially, CDI is paired with an experience-driven optimization framework that trains the instructor via reinforcement learning (RL), where we convert failure trajectories with privacy violations into learning environments. We formalize baseline defenses and CDI as distinct intervention points in a canonical agent loop, and compare their privacy–helpfulness trade-offs within a unified simulation framework. Results show that our CDI consistently achieves a better balance between privacy preservation (94.2%) and helpfulness (80.6%) than baselines, with superior robustness to adversarial conditions and generalization.
 
 ## Architecture
 
 ### Core Components
 
-1. **Agent System** (`agent.py`, `agent_utils.py`)
+1. **Agent System** (`agent.py`, `modules/`)
    - Implements the three-role simulation framework
-   - Handles multi-turn conversations and tool usage
-   - Manages agent memory and decision-making
+   - defense families: prompting included in config files, guarding and CDI under `modules/`
+ 
+2. **Simulation Engine** (`simulation.py`)
+   - Simulate multi-agent communication
 
-2. **Simulation Engine** (`simulation.py`, `launch.py`)
-   - Orchestrates multi-agent interactions
-   - Manages parallel execution and result collection
-   - Provides configurable experiment settings
+3. **Search Algorithm** (`search_control.py`)
+   - Prompt optimization for attack and prompting defense
 
-3. **Search Algorithm** (`search_control.py`, `search_generate.py`)
-   - LLM-powered strategy optimization
-   - Parallel search with cross-thread propagation
-   - Automated instruction generation and refinement
+4. **Evaluation Framework** (`mixed_evaluation.py`)
+   - Compute privacy protection rate (PP), helpfulness score (HS), and appropriate disclosure rate (AD)
 
-4. **Evaluation Framework** (`evaluation.py`)
-   - Privacy leakage detection and scoring
-   - Trajectory analysis and pattern recognition
-   - Performance metrics and reporting
+5. **Training Framework** (`train.py`, `training_utils/`)
+    - Trajectory selection standards
+    - GRPO training loop for instructor model, guard model
+    - Reward calculation
 
 ### Directory Structure
 
 ```
-├── agent.py                  # Core agent implementation
-├── agent_utils.py            # Agent prompts and utilities
-├── simulation.py             # Simulation orchestration
-├── evaluation.py             # Privacy evaluation framework
-├── search_control.py         # Main search algorithm
+├── agent.py                  # Agent implementation
+├── modules/                  # Defense implementation (guarding, CDI)
+├── simulation.py             # Simulation
+├── mixed_evaluation.py       # Evaluate simulation results
+├── search_control.py         # Search algorithm
+├── train.py                  # Training script for instructor and guard models
+├── training_utils/           # Utilities for training
+├── scripts/                  # bash scripts for running experiments
 ├── applications/             # Application-specific modules
 ├── example_generation/       # Training and test examples
-├── search/                   # Example search results
 └── camel/                    # A copy of the Camel framework, slightly modified
 ```
 
@@ -66,20 +64,23 @@ We provide simulation trajectories and search trajectories on [Huggingface](http
 
 ## Quick Start
 
-### 1. Running a Single Simulation
+### 1. Running Simulation with Vanilla Agents
 
 Here is one command from the search process:
 
 ```bash
 python simulation.py \
-  --model_list gpt-4.1-mini gpt-4.1-mini gpt-4.1-mini \
+  --model_list gpt-4.1-mini gpt-4.1-mini gpt-4.1-mini  \
   --version v1 \
-  --num_runs 10 \
-  --example_folder ./search/search_test/best/examples \
-  --simulation_folder ./search/search_test/best/results \
+  --num_runs 1 \
+  --example_folder example_generation/train \
+  --simulation_folder example_trajectory/train \
   --search_mode \
   --appless \
-  --num_processes 4
+  --example_ids 16 44 73 91 93 \
+  --num_processes 5
+
+python mixed_evaluation.py --example_folder example_trajectory/train/example_v1
 ```
 
 **Parameters:**
@@ -87,108 +88,103 @@ python simulation.py \
 - `--version`: Name of the example folder
 - `--num_runs`: Number of simulations per configuration
 - `--num_processes`: Number of parallel processes
+- `--example_ids`: IDs of examples to simulate
 
-### 2. Evaluating Results
+### 2. Running Simulation with Privacy Defenses
 
-Here is one command from the search process:
+To enable prompting, add defense prompts in the example generation config files. Or use the default prompts from PrivacyLens with `--prompting`.
 
-```bash
-python evaluation.py \
-  --example_folder ./search/search_test/best/results/example_v1 \
-  --search_mode
-```
+To enable guarding, add `--guard_agent_model <model_name>` and `--guard_base_url <base_url>` to specify the guard model.
 
-### 3. Running Full Search Experiments
+To enable CDI, add `--instruct_agent_model <model_name>` and `--instruct_base_url <base_url>` to specify the instructor model.
+
+### 3. Running Adversarial Attack
 
 ```bash
 python search_control.py \
-   --config_dir ./example_generation/example_search_train \
-   --output_dir ./example_generation/example_search_train_test \
+   --config_dir  example_generation/train \
+   --output_dir example_generation/train_attacked \
    --example_ids 16 \
-   --search_dir_list search_test \
+   --search_dir_list train_attacked_16 \
    --attack_num_examples 5 \
-   --num_tasks 30 \
+   --num_tasks 10 \
    --num_runs 1 \
    --goal attack \
    --appless \
-   --num_processes 30 \
-   --max_simulation_round 3 \
+   --num_processes 10 \
+   --max_simulation_round 2 \
    --keep_bank \
    --target_exp_result 0.0 \
    --adaptive_search \
    --prompt_version v1 \
    --no_backtrack \
+   --instruct_agent_model unsloth/Qwen3-4B \
+   --instruct_base_url http://localhost:8001/v1 \
    --data_sender_model gpt-4.1-mini \
    --data_subject_model gpt-4.1-mini \
-   --data_recipient_model gpt-4.1-mini
+   --data_recipient_model gpt-4.1-mini \
+   --search_agent_model gpt-5
 ```
 
 **Key Parameters:**
 - `--attack_num_examples`: Number of trajectories for reflection, use `--defense_num_examples` for defense
 - `--num_tasks`: Number of threads (default in paper: 30), not used for defense
-- `--num_runs`: Number of simulations per configuration (default in paper: 1 for attack, 6 for defense)
-- `--num_processes 30`: Number of parallel process used for experiments
-- `--goal`: `attack` or `defense` to optimize attacker or defender strategies
+- `--num_runs`: Number of simulations per configuration (default in paper: 1)
+- `--num_processes`: Number of parallel process used for experiments
 - `--max_simulation_round`: Total search steps (default in paper: 10)
-- `--adaptive_search`: Enables cross-thread propagation. Use `--local_search_round 1` to turn it off
-- `--prompt_version`: Specify the prompt version for LLM optimizers, default in paper is v1
 
-### 4. Tracking Search Progress
 
-Monitor the search process in real-time:
+### 4. Prompting Optimization via Search
 
 ```bash
-python show_log_analysis.py test.log
+python search_control.py \
+   --config_dir  example_generation/train \
+   --output_dir example_generation/train_prompting_5 \
+   --example_ids 16 44 73 91 93 \
+   --search_dir_list train_prompting_5 \
+   --defense_num_examples 5 \
+   --num_tasks 1 \
+   --num_runs 2 \
+   --goal defense \
+   --appless \
+   --num_processes 10 \
+   --max_simulation_round 2 \
+   --keep_bank \
+   --target_exp_result 1.0 \
+   --adaptive_search \
+   --prompt_version v1 \
+   --no_backtrack \
+   --use_mixed_objective \
+   --data_sender_model gpt-4.1-mini \
+   --data_subject_model gpt-4.1-mini \
+   --data_recipient_model gpt-4.1-mini \
+   --search_agent_model gpt-5
 ```
 
-Example output:
-```
-[INFO] Simulation round 1 of 3...
-[INFO] Best performance updated: 1.0 -> 0.88
-[INFO] Simulation round 2 of 3...
-[INFO] Best performance not updated: 0.88 -> 0.95
-[INFO] Simulation round 3 of 3...
-[INFO] Best performance updated: 0.88 -> 0.35
-1.0 -> 0.88 (1) -> 0.88 -> 0.35 (3)
-```
+**Key Parameters:**
+- `--defense_num_examples`: Number of trajectories for reflection, use `--attack_num_examples` for attack
+- `--use_mixed_objective`: Whether to use AD for optimization, default use PP
+- `--num_runs`: Number of simulations per configuration (default in paper: 10)
+- `--max_simulation_round`: Total search steps (default in paper: 10)
 
-### 5. Resampling Examples
-
-Generate additional samples for analysis:
+### 5. Training Instructor and Guard Models
 
 ```bash
-python search_resample.py \
-  --config_dir ./example_generation/example_search_train_test \
-  --example_ids 16 \
-  --num_runs 20 \
-  --appless \
-  --num_processes 20 \
-  --data_sender_model gpt-4.1-mini \
-  --data_subject_model gpt-4.1-mini \
-  --data_recipient_model gpt-4.1-mini
+python train.py --config scripts/training.yaml
 ```
 
-## Citation
+You can modify the training configurations in `scripts/training.yaml`.
 
-If you use this framework in your research, please cite:
+**Key Parameters:**
+- `model_name_or_path`: Base model for instructor or guard
+- `dataset_instruct_folder`: Folder containing training examples for instructor model
+- `dataset_guard_folder`: Folder containing training examples for guard model
+- `use_mixed_objective`: Whether to use AD for training instructor model, default use PP
 
-```bibtex
-@misc{zhang2025searchingprivacyrisksllm,
-      title={Searching for Privacy Risks in LLM Agents via Simulation}, 
-      author={Yanzhe Zhang and Diyi Yang},
-      year={2025},
-      eprint={2508.10880},
-      archivePrefix={arXiv},
-      primaryClass={cs.CR},
-      url={https://arxiv.org/abs/2508.10880}, 
-}
-```
 
 ## Acknowledgments
 
-- Built on the [CAMEL framework](https://github.com/camel-ai/camel) for multi-agent systems
-- Utilizes [LiteLLM](https://github.com/BerriAI/litellm) for unified model access
-
-## Contact
-
-If you have any questions, please feel free to leave issues or email the first author.
+- Built on the [Search for Privacy Risks](https://github.com/SALT-NLP/search_privacy_risk.git) for simulation, attack and optimization for prompting method
+- Use [CAMEL framework](https://github.com/camel-ai/camel) for multi-agent systems
+- Use [LiteLLM](https://github.com/BerriAI/litellm) for unified model access
+- Use [Open-R1] (https://github.com/huggingface/open-r1.git) for GRPO training framework

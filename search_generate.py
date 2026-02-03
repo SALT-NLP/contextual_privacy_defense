@@ -47,23 +47,11 @@ async def cleanup_aiohttp():
         except Exception:
             pass
 
-def generate_random_function(N, seed):
-    """
-    Generates a random bijective function f: {1, ..., N} -> {1, ..., N}
-    based on a given seed.
-
-    Returns a dictionary where key i maps to f(i).
-    """
-    random.seed(seed)
-    domain = list(range(1, N + 1))
-    codomain = domain.copy()
-    random.shuffle(codomain)
-    return dict(zip(domain, codomain))
-
 class PromptManager:
     _instance = None
     _prompt_functions = None
     _current_version = "v1"
+    _current_use_mixed_objective = False
 
     def __new__(cls):
         if cls._instance is None:
@@ -77,39 +65,24 @@ class PromptManager:
         cls._instance.set_version(version)
         return cls._instance
 
-    def set_version(self, version):
-        if version == self._current_version and self._prompt_functions is not None:
+    def set_version(self, version, use_mixed_objective=False):
+        if version == self._current_version and self._prompt_functions is not None and use_mixed_objective == self._current_use_mixed_objective:
             return
 
-        try:
-            prompt_module = importlib.import_module(f"search_prompt_{version}")
-            get_attack_system_prompt = prompt_module.get_attack_system_prompt
-            get_defense_system_prompt = prompt_module.get_defense_system_prompt
-            get_attack_rewrite_query = prompt_module.get_attack_rewrite_query
-            get_defense_rewrite_query = prompt_module.get_defense_rewrite_query
+        prompt_module = importlib.import_module(f"search_prompt_{version}")
+        get_attack_system_prompt = prompt_module.get_attack_system_prompt
+        get_defense_system_prompt = prompt_module.get_defense_system_prompt if not use_mixed_objective else prompt_module.get_defense_system_prompt_mixed_objective
+        get_attack_rewrite_query = prompt_module.get_attack_rewrite_query
+        get_defense_rewrite_query = prompt_module.get_defense_rewrite_query if not use_mixed_objective else prompt_module.get_defense_rewrite_query_mixed_objective
 
-            self._prompt_functions = {
-                "get_attack_system_prompt": get_attack_system_prompt,
-                "get_defense_system_prompt": get_defense_system_prompt,
-                "get_attack_rewrite_query": get_attack_rewrite_query,
-                "get_defense_rewrite_query": get_defense_rewrite_query
-            }
-            self._current_version = version
-        except ImportError:
-            print(f"Warning: search_prompt_{version} not found, falling back to default search_prompt")
-            from search_prompt_v1 import (
-                get_attack_system_prompt,
-                get_defense_system_prompt,
-                get_attack_rewrite_query,
-                get_defense_rewrite_query
-            )
-            self._prompt_functions = {
-                "get_attack_system_prompt": get_attack_system_prompt,
-                "get_defense_system_prompt": get_defense_system_prompt,
-                "get_attack_rewrite_query": get_attack_rewrite_query,
-                "get_defense_rewrite_query": get_defense_rewrite_query
-            }
-            self._current_version = "v1"
+        self._prompt_functions = {
+            "get_attack_system_prompt": get_attack_system_prompt,
+            "get_defense_system_prompt": get_defense_system_prompt,
+            "get_attack_rewrite_query": get_attack_rewrite_query,
+            "get_defense_rewrite_query": get_defense_rewrite_query
+        }
+        self._current_version = version
+        self._current_use_mixed_objective = use_mixed_objective
 
     def get_attack_system_prompt(self, *args, **kwargs):
         return self._prompt_functions["get_attack_system_prompt"](*args, **kwargs)
@@ -132,9 +105,9 @@ get_defense_system_prompt = prompt_manager.get_defense_system_prompt
 get_attack_rewrite_query = prompt_manager.get_attack_rewrite_query
 get_defense_rewrite_query = prompt_manager.get_defense_rewrite_query
 
-def set_prompt_version(version):
+def set_prompt_version(version, use_mixed_objective=False):
     """Set the prompt version to use."""
-    prompt_manager.set_version(version)
+    prompt_manager.set_version(version, use_mixed_objective)
 
 async def select_examples(
     bank: List[Dict[str, Any]],
@@ -163,18 +136,9 @@ async def select_examples(
         List of selected examples (up to num_examples), in the order chosen.
     """
     M = len(bank)
-    # random.shuffle(bank)
-
-    # print('-' * 100)
-    # for item in bank:
-    #     print(item["config"]["simulation_config"]["data_recipient_agent"]["task"])
-    #     print(item["average_leak_score"])
-    # print('-' * 100)
-
     if M <= num_examples:
         print(f"Skipping selection because there are only {M} examples...")
         return bank.copy()
-
     # 1) Compute raw relevance scores
     if config is None:
         rel_raw = [1.0 - ex.get("average_leak_score", 1.0) for ex in bank]
@@ -232,7 +196,7 @@ async def select_examples(
 
     return [bank[i] for i in selected]
 
-@retry(max_retries=16, initial_delay=8, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError, JSONDecodeError, ValueError, AttributeError))
+@retry(max_retries=4, initial_delay=4, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError, JSONDecodeError, ValueError, AttributeError))
 async def fix_task_description(original_task, generated_task):
     if original_task.strip(".").lower() in generated_task.strip(".").lower():
         return generated_task
@@ -259,9 +223,10 @@ Respond with a task description that starts with "{original_task}".
     print(f"Paraphrasing task description:\n{generated_task} \n-> {response.choices[0].message.content}")
     return response.choices[0].message.content.replace('\n', ' ').strip()
 
-@retry(max_retries=16, initial_delay=8, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError, JSONDecodeError, ValueError, AttributeError))
+@retry(max_retries=4, initial_delay=4, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError, JSONDecodeError, ValueError, AttributeError))
 async def get_attack_new_config(previous_version, config, selected_bank, history, example_id, search_folder, search_agent_model, no_history=False, best_scores_list=[]):
     async def _try_with_provider(provider):
+        print(f"Trying with provider: {provider}")
         if previous_version == "v1" or no_history:
             system_prompt = get_attack_system_prompt(config)
             query = get_attack_rewrite_query(json.dumps(config, indent=4), selected_bank, history, best_scores_list)
@@ -292,7 +257,14 @@ async def get_attack_new_config(previous_version, config, selected_bank, history
 
     try:
         try:
-            return await _try_with_provider("azure")
+            if "Qwen" in search_agent_model or "oss" in search_agent_model:
+                return await _try_with_provider("local_vllm")
+            elif "gemini" in search_agent_model:
+                return await _try_with_provider("gemini")
+            elif "azure" in search_agent_model:
+                return await _try_with_provider("azure")
+            else:
+                return await _try_with_provider("openai")
         except Exception as e:
             is_internal_error = False
             if InternalServerError is not None and isinstance(e, InternalServerError):
@@ -310,9 +282,10 @@ async def get_attack_new_config(previous_version, config, selected_bank, history
         # Let the retry decorator handle further retries
         raise
 
-@retry(max_retries=16, initial_delay=8, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError, JSONDecodeError, ValueError, AttributeError))
+@retry(max_retries=4, initial_delay=4, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError, JSONDecodeError, ValueError, AttributeError))
 async def get_defense_new_config(previous_version, whole_config, selected_bank, history, search_folder, search_agent_model, no_history=False, best_scores_list=[]):
     async def _try_with_provider(provider):
+        print(f"Trying with provider: {provider}")
         if previous_version == "v1" or no_history:
             system_prompt = get_defense_system_prompt(whole_config)
             query = get_defense_rewrite_query(json.dumps(whole_config, indent=4), selected_bank, history, best_scores_list)
@@ -343,7 +316,14 @@ async def get_defense_new_config(previous_version, whole_config, selected_bank, 
 
     try:
         try:
-            return await _try_with_provider("azure")
+            if "Qwen" in search_agent_model or "oss" in search_agent_model:
+                return await _try_with_provider("local_vllm")
+            elif "gemini" in search_agent_model:
+                return await _try_with_provider("gemini")
+            elif "azure" in search_agent_model:
+                return await _try_with_provider("azure")
+            else:
+                return await _try_with_provider("openai")
         except Exception as e:
             is_internal_error = False
             if InternalServerError is not None and isinstance(e, InternalServerError):
@@ -535,11 +515,12 @@ async def main():
     parser.add_argument("--num_tasks", type=int, default=10)
     parser.add_argument("--best_scores_list", type=float, nargs="+", default=[])
     parser.add_argument("--prompt_version", type=str, default="v1", help="Version of prompts to use (e.g., v1, v2, v3)")
-    parser.add_argument("--search_agent_model", type=str, default="vertex_ai/gemini-2.5-pro")
+    parser.add_argument("--search_agent_model", type=str, default="gemini/gemini-2.5-pro")
+    parser.add_argument("--use_mixed_objective", action="store_true")
     args = parser.parse_args()
 
     # Initialize prompt manager with the specified version
-    set_prompt_version(args.prompt_version)
+    set_prompt_version(args.prompt_version, args.use_mixed_objective)
 
     print(f"[INFO] search_generate, args: {args}...")
 
@@ -584,6 +565,7 @@ async def main():
 
 
     bank_path = os.path.join(search_folder, "bank.json")
+    
     if os.path.exists(bank_path):
         with open(bank_path, "r") as f:
             bank = json.load(f)

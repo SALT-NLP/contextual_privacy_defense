@@ -1,11 +1,9 @@
-from typing import Dict, Optional
-import logging
+from typing import Dict, Optional, List
 from datetime import datetime
 from openai import AzureOpenAI, OpenAIError, RateLimitError
-import argparse
 from applications import InprocAppClient
 import uuid
-from utils import retry, unified_call_inproc, parse_response, parse_function_call
+from utils import retry, parse_response, parse_function_call
 from copy import deepcopy
 from prompt_utils import (
     get_app_instruction_prompt,
@@ -22,11 +20,11 @@ from agent_utils import (
     get_tool_names
 )
 import json
-import timeout_decorator
-
+from modules.agent_instruct import InstructAgent
+from modules.agent_guard import GuardAgent
 import litellm
+litellm.num_retries = 3
 from camel.models import LiteLLMModel
-from camel.types import ModelPlatformType, ModelType
 from camel.agents import ChatAgent
 from camel.agents._types import ToolCallRequest
 from camel.types.agents import ToolCallingRecord
@@ -55,21 +53,20 @@ def custom_log(message: str, log_file: Optional[str] = None, level: str = "INFO"
 
 class Task:
     """Class to encapsulate task state and management."""
-    def __init__(self, task_id: str, goal: str, max_actions: Optional[int] = 10, time_limit: Optional[int] = 360, response_timeout: Optional[int] = 60):
+    def __init__(self, task_id: str, goal: str, max_actions: Optional[int] = 10, time_limit: Optional[int] = 3600, response_timeout: Optional[int] = 600):
         self.task_id = task_id
         self.goal = goal
         self.max_actions = int(max_actions)
         self.time_limit = int(time_limit)
         self.actions_taken = 0
         self.start_time = datetime.now()
-        self.last_update_time = datetime.now()
-        # self.last_update_time = datetime(2025, 1, 1, 0, 0, 0) # initialize to a old time
+        self.last_update_time = datetime(2025, 1, 1, 0, 0, 0) # initialize to a old time
         self.is_active = True
         self.action_task = None
         self.response_timeout = int(response_timeout)
 
 class Agent(InprocAppClient):
-    def __init__(self, agent_id: str, user_id: str, host: str, port: int, deployment_name: str = "azure/gpt-4.1-mini-250414-13576", log_file: Optional[str] = None):
+    def __init__(self, agent_id: str, user_id: str, host: str, port: int, deployment_name: str = "azure/gpt-4.1-mini-250414-65987", log_file: Optional[str] = None, instruct_agent_model = None, guard_agent_model = None, instruct_base_url: str = "http://localhost:8000/v1", guard_base_url: str = "http://localhost:8000/v1"):
         super().__init__()
         self.agent_id = agent_id
         self.user_id = user_id
@@ -87,10 +84,10 @@ class Agent(InprocAppClient):
         self.thinking = False
 
         # Qwen Thinking or gpt-oss Thinking
-        if ("Thinking" in self.deployment_name or "gpt-oss" in self.deployment_name) and "hosted_vllm" in self.deployment_name:
-            self.single_cycle_timeout = 300
+        if ("Qwen" in self.deployment_name or "gpt-oss" in self.deployment_name) and "hosted_vllm" in self.deployment_name:
+            self.single_cycle_timeout = 7200
         else:
-            self.single_cycle_timeout = 120
+            self.single_cycle_timeout = 2400
         self.single_cycle_max_steps = 50
 
         self.tasks = {}  # task_id -> Task object
@@ -98,14 +95,7 @@ class Agent(InprocAppClient):
         self.action_type = "multi_turn"
 
         if self.action_type == "multi_turn":
-            if "gemini" in self.deployment_name and "flash" in self.deployment_name:
-                model_config_dict = {
-                    "reasoning_effort": "disable",
-                    "temperature": 1.0,
-                    "parallel_tool_calls": False,
-                    "drop_params": True
-                }
-            elif "gpt" in self.deployment_name and "oss" not in self.deployment_name:
+            if ("gpt" in self.deployment_name and "oss" not in self.deployment_name) or ("gemini" in self.deployment_name) or ("deepseek" in self.deployment_name) or ("dashscope" in self.deployment_name):
                 model_config_dict = {
                     "temperature": 1.0,
                     "parallel_tool_calls": False,
@@ -173,7 +163,18 @@ class Agent(InprocAppClient):
         custom_log(self.get_api_spec(), self.log_file)
         custom_log("###########################################################", self.log_file)
         custom_log("", self.log_file)
-
+        if instruct_agent_model:
+            self.instruct_agent = InstructAgent(instruct_agent_model, instruct_base_url)
+        else:
+            self.instruct_agent = None
+        # guard_agent_model: <deployment_name>_<retry_times>
+        if guard_agent_model:
+            self.guard_agent = GuardAgent("_".join(guard_agent_model.split("_")[:-1]), self.user_id, guard_base_url)
+            self.retry_times = int(guard_agent_model.split("_")[-1])
+        else:
+            self.guard_agent = None
+            self.retry_times = 0
+ 
     def execute_instruction_on_apps(self, instruction: str) -> Dict:
         return self._process_instruction_on_apps_llm_based(instruction)
         
@@ -221,14 +222,14 @@ class Agent(InprocAppClient):
         """
         return {"memory": self.memory}
 
-    def start_task(self, goal: str, max_actions: Optional[int] = 10, time_limit: Optional[int] = 360, response_timeout: Optional[int] = 60) -> Dict:
+    def start_task(self, goal: str, max_actions: Optional[int] = 10, time_limit: Optional[int] = 3600, response_timeout: Optional[int] = 600) -> Dict:
         r"""Start a task with a specific goal. It will monitor the environment for changes (every few seconds) and take proactive actions (depends on the response timeout parameter).
             
         Args:
             goal (str): The goal of the task
             max_actions (int, optional): Maximum number of actions to take. Default is 10.
-            time_limit (int, optional): Maximum time to spend on the task in seconds. Default is 360.
-            response_timeout (int, optional): Maximum time to wait for taking proactive actions in seconds. Default is 60. If set to 0, proactive actions are disabled.
+            time_limit (int, optional): Maximum time to spend on the task in seconds. Default is 3600.
+            response_timeout (int, optional): Maximum time to wait for taking proactive actions in seconds. Default is 600. If set to 0, proactive actions are disabled.
 
         Returns:
             status (str): The status of the operation
@@ -287,6 +288,7 @@ class Agent(InprocAppClient):
                     "elapsed_time": elapsed_time,
                     "is_active": task.is_active
                 }
+        custom_log(f"Listed tasks: {task_info}", self.log_file)
         return {"tasks": task_info}
 
     def get_task_status(self) -> Dict:
@@ -313,7 +315,7 @@ class Agent(InprocAppClient):
             actions_taken += task.actions_taken
         return {"actions_taken": actions_taken}
 
-    @retry(max_retries=16, initial_delay=8, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError, json.JSONDecodeError, AttributeError, TypeError))
+    @retry(max_retries=16, initial_delay=4, backoff_factor=1, exceptions=(OpenAIError, RateLimitError, json.JSONDecodeError, AttributeError, TypeError, KeyError))
     def _process_instruction_on_apps_llm_based(self, instruction: str) -> Dict:
         """Process user instruction using LLM, predict the app and action, and execute corresponding actions."""
         API_spec = ""
@@ -326,9 +328,8 @@ class Agent(InprocAppClient):
         # Predict the app and action using the prompt
         prompt = get_app_instruction_prompt(API_spec, self.memory, instruction)
         custom_log(f"LLM prompt: {prompt}", self.log_file)
-
         response = litellm.completion(
-            model="azure/gpt-4.1-mini-250414-13576",
+            model="azure/gpt-4.1-mini-250414-65987",
             messages=[{"role": "system", "content": prompt}],
             max_tokens=1000
         )
@@ -342,18 +343,18 @@ class Agent(InprocAppClient):
         else:
             return {"error": "No function call found in the response"}
 
-    @retry(max_retries=16, initial_delay=8, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError, json.JSONDecodeError, AttributeError, TypeError, KeyError))
+    @retry(max_retries=16, initial_delay=4, backoff_factor=1, exceptions=(OpenAIError, RateLimitError, json.JSONDecodeError, AttributeError, TypeError, KeyError))
     def _process_instruction_on_agent_llm_based(self, instruction: str) -> Dict:
         """Process user instruction using LLM, predict the action, and execute corresponding actions."""
         agent_spec = self.get_api_spec()
         prompt = get_agent_instruction_prompt(agent_spec, self.memory, instruction)
         custom_log(f"LLM prompt: {prompt}", self.log_file)
-
         response = litellm.completion(
-            model="azure/gpt-4.1-mini-250414-13576",
+            model="azure/gpt-4.1-mini-250414-65987",
             messages=[{"role": "system", "content": prompt}],
             max_tokens=1000
         )
+
         response_content = response.choices[0].message.content.strip()
         custom_log(f"LLM response: {response_content}", self.log_file)
 
@@ -568,8 +569,8 @@ class Agent(InprocAppClient):
                 "function": function_name,
                 "parameters": tool_call_request.args
             }
-
-        def execute_tool(agent: ChatAgent, tool_call_request: ToolCallRequest) -> ToolCallingRecord:
+            
+        def execute_tool(agent: ChatAgent, tool_call_request: ToolCallRequest) -> ToolCallingRecord | None:
             r"""Execute the tool with arguments following the model's response.
 
             Args:
@@ -585,7 +586,23 @@ class Agent(InprocAppClient):
 
             try:
                 if func_name not in ["think", "end_action_cycle", "complete_task"]:
+
                     function_call = tool_call_to_function_call(tool_call_request)
+
+                    if func_name in ["Messenger_send_message", "Gmail_send_email", "Facebook_create_post"]:
+                        # call guard agent
+                        block = False
+                        if self.guard_agent:
+                            block = self.guard_agent.get_guard(agent.memory.get_context()[0], func_name, args)
+                            custom_log(f"Guard agent detection result {block}", self.log_file, "NOTICE")
+                        if self.this_cycle_retry_times == 0:
+                            custom_log(f"Guard agent block times exhausted for tool call: {func_name} with args: {args}", self.log_file, "ERROR")
+                            function_call["parameters"]["block"] = False
+                        elif block:
+                            self.this_cycle_retry_times -= 1
+                            custom_log(f"Guard agent blocked the tool call: {func_name} with args: {args}, remaining retry times: {self.this_cycle_retry_times}", self.log_file, "ERROR")
+                            function_call["parameters"]["block"] = block
+
                     result = self.call_app_function(
                         function_call["app"], 
                         function_call["function"], 
@@ -615,11 +632,12 @@ class Agent(InprocAppClient):
                 error_msg = f"Error executing tool '{func_name}': {e!s}"
                 result = {"error": error_msg}
 
-            custom_log(f"Result: {result}", self.log_file)
+            #custom_log(f"Result: {result}", self.log_file)
+
             return agent._record_tool_calling(func_name, args, result, tool_call_id)
         
         # Timeout decorator might not work properly
-        @timeout_decorator.timeout(self.single_cycle_timeout, timeout_exception=TimeoutError)
+#        @timeout_decorator.timeout(self.single_cycle_timeout, timeout_exception=TimeoutError)
         def agent_step_with_tool_call(agent: ChatAgent, input_message: str) -> None:
             think_step = True
             task_completed = False
@@ -628,6 +646,7 @@ class Agent(InprocAppClient):
             agent_step_count = 0
 
             while True:
+                custom_log(f"Agent step {agent_step_count}, think_step: {think_step}", self.log_file)
                 if self.thinking:
                     try:
                         response = agent.step(input_message)
@@ -640,6 +659,7 @@ class Agent(InprocAppClient):
                         agent.model_backend.current_model.model_config_dict["tool_choice"] = {"type": "function", "function": {"name": "think"}}
                         try:
                             response = agent.step(input_message)
+                            # custom_log(f"AResponse: {response}", self.log_file)
                         except json.JSONDecodeError as e:
                             custom_log(f"JSONDecodeError: {e}", self.log_file)
                             continue
@@ -693,15 +713,27 @@ class Agent(InprocAppClient):
                 think_step = not think_step
                 agent_step_count += 1
 
-                if (datetime.now() - initial_time).total_seconds() > self.single_cycle_timeout or agent_step_count > self.single_cycle_max_steps:
-                    custom_log(f"Timeout in action cycle, time taken: {(datetime.now() - initial_time).total_seconds()}, agent step count: {agent_step_count}", self.log_file)
-                    print(f"Timeout in action cycle, time taken: {(datetime.now() - initial_time).total_seconds()}, agent step count: {agent_step_count}")
+                if agent_step_count > self.single_cycle_max_steps:
+                    # (datetime.now() - initial_time).total_seconds() > self.single_cycle_timeout or \
+                    print(f"Max steps exceeded in action cycle, time taken: {(datetime.now() - initial_time).total_seconds()}, agent step count: {agent_step_count}")
                     break
 
                 if cycle_finished:
                     break
                 input_message = agent.memory.get_context()[0][-1]
-            
+                context = agent.memory.get_context()[0]
+
+                msg = context[-2] if len(context) >= 2 else None
+                #custom_log(f"Second last input msg: {msg}", self.log_file)
+                if self.instruct_agent and msg and msg['role'] == "assistant" and msg["content"] == '' and 'tool_calls' in msg and msg['tool_calls']:
+                   # custom_log("Here", self.log_file)
+                    tool_name = msg['tool_calls'][0]['function']['name']
+                    if tool_name in ["Messenger_get_messages", "Gmail_get_email", "Notion_get_page", "Facebook_get_posts"]:
+                        #custom_log("Generating instruction for the next tool call...", self.log_file)
+                        instruction, analysis = self.instruct_agent.get_instruct(context)
+                        input_message = f"\n## Instruction:\n{instruction}"
+                    #input_message += f"\n## Instruction:\n{instruction}"
+
             return task_completed
 
         def agent_step_with_tool_call_with_retry(agent: ChatAgent, input_message: str) -> None:
@@ -743,7 +775,7 @@ class Agent(InprocAppClient):
             system_message = get_multi_turn_system_message_with_thinking(self.memory, task.goal, task.start_time, task.time_limit)
         else:       
             system_message = get_multi_turn_system_message(self.memory, task.goal, task.start_time, task.time_limit)
-
+        self.this_cycle_retry_times = self.retry_times
         agent = ChatAgent(model=self.camel_model, system_message=system_message)
 
         # Load trajectory from previous action cycles
@@ -752,8 +784,8 @@ class Agent(InprocAppClient):
 
         agent._external_tool_schemas = app_spec_dict
 
-        custom_log("Tools:", self.log_file)
-        custom_log(agent._external_tool_schemas, self.log_file)
+        #custom_log("Tools:", self.log_file)
+        #custom_log(agent._external_tool_schemas, self.log_file)
 
         tool_names = get_tool_names(agent._external_tool_schemas)
         custom_log(f"Tool names: {tool_names}", self.log_file)

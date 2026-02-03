@@ -284,7 +284,8 @@ for example_dir in example_dir_list:
         privacy_preserve_list.extend(current_privacy_preserve_list)
 
         current_num_unleak_action, current_num_leak_action, current_num_unleak_epoch, current_num_leak_epoch = get_privacy_leakge_num(evaluation, num_sensitive_data)
-
+        if current_num_leak_epoch > 0:
+            print(f"[INFO] Example {example_dir} log {log_dir} is leaky.")
         num_unleak_action += current_num_unleak_action
         num_leak_action += current_num_leak_action
         num_unleak_epoch += current_num_unleak_epoch

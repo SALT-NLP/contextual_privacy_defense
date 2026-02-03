@@ -31,7 +31,7 @@ from camel.types import (
     ModelType,
 )
 from camel.utils import BaseTokenCounter, OpenAITokenCounter
-
+from openai import OpenAI, AsyncOpenAI
 
 # Added by Yanzhe
 def retry(max_retries=5, initial_delay=1, backoff_factor=2, exceptions=(Exception,), jitter=False):
@@ -42,14 +42,14 @@ def retry(max_retries=5, initial_delay=1, backoff_factor=2, exceptions=(Exceptio
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
             delay = initial_delay
-            for attempt in range(max_retries + 1):
+            for attempt in range(min(max_retries, 5) + 1):
                 try:
                     return await func(*args, **kwargs)
                 except exceptions as e:
                     if attempt < max_retries:
                         total_delay = delay + random.uniform(0, delay * 0.1) if jitter else delay
                         print(
-                            f"Retry {attempt + 1} of {max_retries} after error: {e}. Waiting {total_delay} seconds...")
+                            f"Retry {attempt + 1} of {min(max_retries, 5)} after error: {e}. Waiting {total_delay} seconds...")
                         await asyncio.sleep(total_delay)
                         delay *= backoff_factor
                     else:
@@ -58,14 +58,14 @@ def retry(max_retries=5, initial_delay=1, backoff_factor=2, exceptions=(Exceptio
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
             delay = initial_delay
-            for attempt in range(max_retries + 1):
+            for attempt in range(min(max_retries, 5) + 1):
                 try:
                     return func(*args, **kwargs)
                 except exceptions as e:
                     if attempt < max_retries:
                         total_delay = delay + random.uniform(0, delay * 0.1) if jitter else delay
                         print(
-                            f"Retry {attempt + 1} of {max_retries} after error: {e}. Waiting {total_delay} seconds...")
+                            f"Retry {attempt + 1} of {min(max_retries, 5)} after error: {e}. Waiting {total_delay} seconds...")
                         time.sleep(total_delay)
                         delay *= backoff_factor
                     else:
@@ -156,6 +156,20 @@ class AzureOpenAIModel(BaseModelBackend):
             timeout=self._timeout,
             max_retries=3,
         )
+        ## Yule: Route to OpenAI if rejected by azur
+        self._openai_client = OpenAI(
+            api_key=os.environ.get("OPENAI_API_KEY"),
+            timeout=self._timeout,
+            max_retries=3,
+        )
+        
+        self._async_openai_client = AsyncOpenAI(
+            api_key=os.environ.get("OPENAI_API_KEY"),
+            timeout=self._timeout,
+            max_retries=3,
+        )
+
+        self.openai_model = '-'.join(self.azure_deployment_name.split('azure/')[-1].split('-')[:-2])
 
     @property
     def token_counter(self) -> BaseTokenCounter:
@@ -227,7 +241,9 @@ class AzureOpenAIModel(BaseModelBackend):
         else:
             return await self._arequest_chat_completion(messages, tools)
 
-    @retry(max_retries=16, initial_delay=8, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError))
+    def _is_content_filter_error(self, error: Exception) -> bool:
+        return "filtered due to the prompt triggering" in str(error)
+    @retry(max_retries=4, initial_delay=4, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError))
     def _request_chat_completion(
         self,
         messages: List[OpenAIMessage],
@@ -237,14 +253,26 @@ class AzureOpenAIModel(BaseModelBackend):
 
         if tools:
             request_config["tools"] = tools
+            
+        try:
 
-        return self._client.chat.completions.create(
-            messages=messages,
-            model=self.azure_deployment_name,  # type:ignore[arg-type]
-            **request_config,
-        )
+            return self._client.chat.completions.create(
+                messages=messages,
+                model=self.azure_deployment_name,  # type:ignore[arg-type]
+                **request_config,
+            )
+        except Exception as e:
+            if self._is_content_filter_error(e):
+                print(f"Azure content filter triggered, falling back to OpenAI: {e}")
+                return self._openai_client.chat.completions.create(
+                    messages=messages,
+                    model=self.openai_model,
+                    **request_config,
+                )
+            else:
+                raise e
 
-    @retry(max_retries=16, initial_delay=8, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError))
+    @retry(max_retries=4, initial_delay=4, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError))
     async def _arequest_chat_completion(
         self,
         messages: List[OpenAIMessage],
@@ -254,12 +282,24 @@ class AzureOpenAIModel(BaseModelBackend):
 
         if tools:
             request_config["tools"] = tools
-
-        return await self._async_client.chat.completions.create(
-            messages=messages,
-            model=self.azure_deployment_name,  # type:ignore[arg-type]
-            **request_config,
-        )
+        
+        try:
+            return await self._async_client.chat.completions.create(
+                messages=messages,
+                model=self.azure_deployment_name,  # type:ignore[arg-type]
+                **request_config,
+            )
+        except Exception as e:
+            if self._is_content_filter_error(e):
+                print(f"Azure content filter triggered, falling back to OpenAI: {e}")
+                
+                return await self._async_openai_client.chat.completions.create(
+                    messages=messages,
+                    model=self.openai_model,
+                    **request_config,
+                )
+            else:
+                raise
 
     def _request_parse(
         self,

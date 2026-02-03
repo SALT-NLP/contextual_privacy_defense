@@ -55,7 +55,7 @@ class Messenger(Application):
 
         @self.app.post("/send_message")
         @self.activity_logger("send_message", involved_user_keys=["receiver_id"])
-        async def send_message(token: str, recipient_id: str, message: str) -> Dict:
+        async def send_message(token: str, recipient_id: str, message: str, block: bool = False) -> Dict:
             """
             Sends a text message to a user.
             
@@ -63,10 +63,13 @@ class Messenger(Application):
                 token (str): The auth token of the sender.
                 recipient_id (str): The user ID of the recipient.
                 message (str): The content of the message.
+                block (bool): This should not be passed as a parameter by the user. It is set by guard agent.
             
             Returns:
                 success (bool): Whether the operation was successful.
             """
+            if block:
+                return {"error": "This message is blocked because it leads to privacy violation and was blocked by the guard agent."}
             sender = self._get_user_by_token(token)
             if not sender:
                 raise HTTPException(status_code=401, detail="Invalid token")

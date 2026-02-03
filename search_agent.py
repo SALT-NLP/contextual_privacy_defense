@@ -3,6 +3,7 @@ import os
 import dotenv
 from openai import AzureOpenAI, OpenAI, AsyncAzureOpenAI, AsyncOpenAI
 import litellm
+litellm.num_retries = 3
 from typing import List, Dict
 from utils import retry
 
@@ -20,34 +21,67 @@ class SearchAgent:
        and return the assistant response.
     """
 
-    def __init__(self, model: str = "vertex_ai/gemini-2.5-pro", temperature: float = 1.0, provider: str = "azure", budget_tokens: int = 1024):
-        # if provider == "azure":
-        #     self.openai = AzureOpenAI(
-        #         api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        #         api_version=os.getenv("AZURE_API_VERSION"),
-        #         azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
-        #     )
-        #     self.async_openai = AsyncAzureOpenAI(
-        #         api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-        #         api_version=os.getenv("AZURE_API_VERSION"),
-        #         azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
-        #     )
-        #     self.model = model
-        # elif provider == "openai":
-        #     self.openai = OpenAI(
-        #         api_key=os.getenv("PERSONAL_OAI_API_KEY")
-        #     )
-        #     self.async_openai = AsyncOpenAI(
-        #         api_key=os.getenv("PERSONAL_OAI_API_KEY")
-        #     )
-        #     self.model = "gpt-4.1"
-        # else:
-        #     raise ValueError(f"Invalid provider: {provider}")
+    def __init__(self, model: str = "gemini/gemini-2.5-pro", temperature: float = 1.0, provider: str = "azure", budget_tokens: int = 1024):
+        if provider == "azure":
+            self.openai = AzureOpenAI(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+            )
+            self.async_openai = AsyncAzureOpenAI(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+            )
+            model = model.split('azure/')[-1]
+        elif provider == "openai":
+            self.openai = OpenAI(
+                api_key=os.getenv("PERSONAL_OAI_API_KEY")
+            )
+            self.async_openai = AsyncOpenAI(
+                api_key=os.getenv("PERSONAL_OAI_API_KEY")
+            )
+            self.model = "gpt-4.1"
+        elif provider == "gemini":
+            self.openai = OpenAI(
+                api_key=os.getenv("GEMINI_API_KEY"),
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+            )
+            self.async_openai = AsyncOpenAI(
+                api_key=os.getenv("GEMINI_API_KEY"),
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+            )
+        elif provider == "local_vllm":
+            if "Qwen3-8B" in model:
+                self.openai = OpenAI(
+                    api_key="EMPTY",
+                    base_url="http://jagupard36:8001/v1"
+                )
+                self.async_openai = AsyncOpenAI(
+                    api_key="EMPTY",
+                    base_url="http://jagupard36:8001/v1"
+                )
+            elif "Qwen3-32B" in model:
+                self.openai = OpenAI(
+                    api_key="EMPTY",
+                    base_url="http://sphinx10:8001/v1"
+                )
+                self.async_openai = AsyncOpenAI(
+                    api_key="EMPTY",
+                    base_url="http://sphinx10:8001/v1"
+                )
+        else:
+            raise ValueError(f"Invalid provider: {provider}")
 
         self.model = model
         self.temperature = temperature
         self.messages: List[Dict[str, str]] = []
         self.budget_tokens = budget_tokens
+        self.reasoning_effort = None
+        if self.model.endswith("-high") or self.model.endswith("-medium") or self.model.endswith("-low"):
+            self.reasoning_effort = self.model.split("-")[-1]
+            self.model = self.model.rsplit("-", 1)[0]
+
 
     def set_system_message(self, system_message: str) -> None:
         """Set or replace the system prompt at the start of the conversation."""
@@ -108,25 +142,35 @@ class SearchAgent:
         self.messages.append({"role": "user", "content": user_query})
 
         # Send to OpenAI ChatCompletion
-        # response = self.openai.chat.completions.create(
-        #     model=self.model,
-        #     messages=self.messages,
-        #     temperature=self.temperature
-        # )
-
-        if "gemini" in self.model:
-            response = litellm.completion(
+        reasoning_effort = self.reasoning_effort
+        print(f"Using model: {self.model} with reasoning_effort: {reasoning_effort}")
+        if reasoning_effort:
+            response = self.openai.chat.completions.create(
                 model=self.model,
                 messages=self.messages,
-                thinking={"type": "enabled", "budget_tokens": self.budget_tokens}
-            )
-        elif "gpt" in self.model:
-            response = litellm.completion(
-                model=self.model,
-                messages=self.messages
+                temperature=self.temperature,
+                reasoning_effort=reasoning_effort
             )
         else:
-            raise ValueError(f"Invalid model: {self.model}")
+            response = self.openai.chat.completions.create(
+                model=self.model,
+                messages=self.messages,
+                temperature=self.temperature
+            )
+
+        # if "gemini" in self.model:
+        #     response = litellm.completion(
+        #         model=self.model,
+        #         messages=self.messages,
+        #         thinking={"type": "enabled", "budget_tokens": self.budget_tokens}
+        #     )
+        # elif "gpt" in self.model:
+        #     response = litellm.completion(
+        #         model=self.model,
+        #         messages=self.messages
+        #     )
+        # else:
+        #     raise ValueError(f"Invalid model: {self.model}")
 
         assistant_message = response.choices[0].message.content
 
@@ -145,25 +189,34 @@ class SearchAgent:
         self.messages.append({"role": "user", "content": user_query})
 
         # Send to OpenAI ChatCompletion
-        # response = await self.async_openai.chat.completions.create(
-        #     model=self.model,
-        #     messages=self.messages,
-        #     temperature=self.temperature
-        # )
-
-        if "gemini" in self.model:
-            response = await litellm.acompletion(
+        reasoning_effort = self.reasoning_effort
+        if reasoning_effort:
+            response = await self.async_openai.chat.completions.create(
                 model=self.model,
                 messages=self.messages,
-                thinking={"type": "enabled", "budget_tokens": self.budget_tokens}
-            )
-        elif "gpt" in self.model:
-            response = await litellm.acompletion(
-                model=self.model,
-                messages=self.messages
+                temperature=self.temperature,
+                reasoning_effort=reasoning_effort
             )
         else:
-            raise ValueError(f"Invalid model: {self.model}")
+            response = await self.async_openai.chat.completions.create(
+                model=self.model,
+                messages=self.messages,
+                temperature=self.temperature
+            )
+
+        # if "gemini" in self.model:
+        #     response = await litellm.acompletion(
+        #         model=self.model,
+        #         messages=self.messages,
+        #         thinking={"type": "enabled", "budget_tokens": self.budget_tokens}
+        #     )
+        # elif "gpt" in self.model:
+        #     response = await litellm.acompletion(
+        #         model=self.model,
+        #         messages=self.messages
+        #     )
+        # else:
+        #     raise ValueError(f"Invalid model: {self.model}")
 
         assistant_message = response.choices[0].message.content
 
@@ -171,13 +224,17 @@ class SearchAgent:
         self.messages.append({"role": "assistant", "content": assistant_message})
 
         # Print usage
-        print(f"Usage: {response.usage}")
+        # print("================================")
+        # print(f"Message: {user_query}")
+        # print(f"Response: {assistant_message}")
+        # print(f"Usage: {response.usage}")
+        # print("================================")
         return assistant_message
 
 
 if __name__ == "__main__":
     # Example usage
-    agent = SearchAgent()
+    agent = SearchAgent(model = "azure/gpt-5-mini-250807-65987", provider = "azure")
     agent.set_system_message("""
 You are a helpful assistant. Your goal is to guess a number between 1 and 10.
 

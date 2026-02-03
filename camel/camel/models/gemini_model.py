@@ -67,22 +67,22 @@ class GeminiModel(BaseModelBackend):
         token_counter: Optional[BaseTokenCounter] = None,
         timeout: Optional[float] = None,
     ) -> None:
-        if model_config_dict is None:
-            model_config_dict = GeminiConfig().as_dict()
-        # api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        # url = url or os.environ.get(
-        #     "GEMINI_API_BASE_URL",
-        #     "https://generativelanguage.googleapis.com/v1beta/openai/",
-        # )
+        # if model_config_dict is None:
+        #     model_config_dict = GeminiConfig().as_dict()
+        api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        url = url or os.environ.get(
+            "GEMINI_API_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
 
-        PROJECT_ID = "gcp-multi-agent"
-        location = "us-central1"
-        vertexai.init(project=PROJECT_ID, location=location)
-        credentials, _ = default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        auth_request = transport.requests.Request()
-        credentials.refresh(auth_request)
-        url=f"https://{location}-aiplatform.googleapis.com/v1beta1/projects/{PROJECT_ID}/locations/{location}/endpoints/openapi"
-        api_key=credentials.token
+        # PROJECT_ID = "gcp-multi-agent"
+        # location = "us-central1"
+        # vertexai.init(project=PROJECT_ID, location=location)
+        # credentials, _ = default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        # auth_request = transport.requests.Request()
+        # credentials.refresh(auth_request)
+        # url=f"https://{location}-aiplatform.googleapis.com/v1beta1/projects/{PROJECT_ID}/locations/{location}/endpoints/openapi"
+        # api_key=credentials.token
         timeout = timeout or float(os.environ.get("MODEL_TIMEOUT", 180))
         super().__init__(
             model_type, model_config_dict, api_key, url, token_counter, timeout

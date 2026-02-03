@@ -1140,7 +1140,12 @@ class ChatAgent(BaseAgent):
             for tool_call in tool_calls:
                 tool_name = tool_call.function.name
                 tool_call_id = tool_call.id
-                args = json.loads(tool_call.function.arguments)
+                temp = tool_call.function.arguments
+                # print(temp, type(temp))
+                temp = temp.strip("'").strip("\"")
+                # print(temp, type(temp))         
+                args = json.loads(temp)
+                # print(args, type(args))
                 tool_call_request = ToolCallRequest(
                     tool_name=tool_name, args=args, tool_call_id=tool_call_id
                 )

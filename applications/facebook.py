@@ -58,17 +58,19 @@ class Facebook(Application):
 
         @self.app.post("/create_post")
         @self.activity_logger("create_post", involved_user_keys=["receiver_id"])
-        async def create_post(token: str, content: str) -> Dict:
+        async def create_post(token: str, content: str, block: bool = False) -> Dict:
             """
             Create a new public post.
             
             Args:
                 token (str): The auth token of the user.
                 content (str): The content of the post.
-            
+                block (bool): This should not be passed as a parameter by the user. It is set by guard agent.
             Returns:
                 success (bool): Whether the operation was successful.
             """
+            if block:
+                return {"error": "This post is blocked because it leads to privacy violation and was blocked by the guard agent."}
             user = self._get_user_by_token(token)
             if not user:
                 raise HTTPException(status_code=401, detail="Invalid token")

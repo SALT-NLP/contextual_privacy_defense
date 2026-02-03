@@ -79,6 +79,8 @@ def run_experiment_appless(commands_file: str, exp_id: str, duration: int = 240,
     commands_path = Path(commands_file).expanduser().resolve()
     base_dir = commands_path.parent
     log_dir = base_dir / f"log_{exp_id}"
+    if os.path.exists(log_dir):
+        return # avoid overwriting existing logs
     log_dir.mkdir(exist_ok=True)
 
     commands = read_commands_from_file(str(commands_path))
@@ -119,8 +121,13 @@ def run_experiment_appless(commands_file: str, exp_id: str, duration: int = 240,
             agent_id = cmd.split("--agent-id")[1].strip().split(" ")[0].strip()
             user_id = cmd.split("--user-id")[1].strip().split(" ")[0].strip()
             deployment_name = cmd.split("--deployment-name")[1].strip().split(" ")[0].strip()
-            agent_dict[agent_id] = Agent(agent_id, user_id, "localhost", port, deployment_name, log_path)
-            
+            instruct_agent_model = cmd.split("--instruct_agent_model")[1].strip().split(" ")[0].strip() if "--instruct_agent_model" in cmd else None
+            guard_agent_model = cmd.split("--guard_agent_model")[1].strip().split(" ")[0].strip() if "--guard_agent_model" in cmd else None
+            instruct_base_url = cmd.split("--instruct_base_url")[1].strip().split(" ")[0].strip() if "--instruct_base_url" in cmd else "http://localhost:8000/v1"
+            guard_base_url = cmd.split("--guard_base_url")[1].strip().split(" ")[0].strip() if "--guard_base_url" in cmd else "http://localhost:8000/v1"
+
+            agent_dict[agent_id] = Agent(agent_id, user_id, "localhost", port, deployment_name, log_path, instruct_agent_model, guard_agent_model, instruct_base_url, guard_base_url)
+
         elif "data_sender" in cmd:
             sender_agent_id = cmd.split("--agent-id")[1].strip().split(" ")[0].strip()
         elif "data_recipient" in cmd:
@@ -225,17 +232,17 @@ def run_experiment_appless(commands_file: str, exp_id: str, duration: int = 240,
                 old_action_info = action_info
                 print(f"Time taken: {time.time() - initial_time} seconds... action taken: {action_info}", file=stdout)
 
-            if time.time() - initial_time > duration:
-                recipient_action_taken_list = action_info[1]
-                if any(item >= minimal_action_taken for item in recipient_action_taken_list):
-                    print(f"Duration reached. Enough actions taken. Ending simulation... action taken: {action_info}", file=stdout)
-                    break
-                else:
-                    print(f"Not enough actions taken. Continuing... current action taken: {action_info}", file=stdout)
+            # if time.time() - initial_time > duration:
+            #     recipient_action_taken_list = action_info[1]
+            #     if any(item >= minimal_action_taken for item in recipient_action_taken_list):
+            #         print(f"Duration reached. Enough actions taken. Ending simulation... action taken: {action_info}", file=stdout)
+            #         break
+            #     else:
+            #         print(f"Not enough actions taken. Continuing... current action taken: {action_info}", file=stdout)
 
-                if time.time() - initial_time > duration * 2:
-                    print(f"Double duration reached. Ending simulation... action taken: {action_info}", file=stdout)
-                    break
+            #     if time.time() - initial_time > duration * 2:
+            #         print(f"Double duration reached. Ending simulation... action taken: {action_info}", file=stdout)
+            #         break
 
         print(f"Time taken: {time.time() - initial_time} seconds", file=stdout)
         print(f"Current time: {datetime.now()}", file=stdout)

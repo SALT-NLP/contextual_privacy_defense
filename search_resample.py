@@ -37,7 +37,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_recipient_model", type=str, default="azure/gpt-4.1-mini-250414-13576")
     parser.add_argument("--sensitive_data_in_memory", action="store_true")
     parser.add_argument("--resample_id", type=str, default=None)
-    parser.add_argument("--search_agent_model", type=str, default="vertex_ai/gemini-2.5-pro")
+    parser.add_argument("--search_agent_model", type=str, default="gemini/gemini-2.5-pro")
     parser.add_argument("--best_scores_list", type=float, nargs="+", default=[])
     args = parser.parse_args()
 

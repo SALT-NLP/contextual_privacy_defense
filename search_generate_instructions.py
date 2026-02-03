@@ -8,6 +8,7 @@ import math
 from openai import OpenAIError, RateLimitError
 from search_prompt_v1 import get_app_constraint, get_simulation_info
 import litellm
+litellm.num_retries = 3
 
 llm = AzureOpenAI(
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
@@ -57,7 +58,7 @@ Respond with a JSON object with the following structure:
 ```
 """
 
-@retry(max_retries=16, initial_delay=8, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError, json.JSONDecodeError, AttributeError))
+@retry(max_retries=4, initial_delay=4, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError, json.JSONDecodeError, AttributeError))
 def get_task_instructions(original_config, search_agent_model, num_tasks=10, generated_instructions=None):
     app_constraint, app_instruction = get_app_constraint(original_config["simulation_config"]["how_to_check_leakage"]["application"])
     original_task = original_config["original_tasks"]["data_recipient_agent"]
@@ -109,7 +110,7 @@ def get_task_instructions(original_config, search_agent_model, num_tasks=10, gen
 
 if __name__ == "__main__":
     original_config = json.load(open("./example_generation/example_search_43/example_1.json", "r"))
-    generated_instructions = get_task_instructions(original_config, "vertex_ai/gemini-2.5-pro", 30, [])
+    generated_instructions = get_task_instructions(original_config, "gemini/gemini-2.5-pro", 30, [])
     
     print(len(generated_instructions))
     print("\n".join(generated_instructions))

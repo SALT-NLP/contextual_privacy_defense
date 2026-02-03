@@ -30,7 +30,8 @@ from camel.utils import (
     LiteLLMTokenCounter,
     dependencies_required,
 )
-
+from openai import OpenAI
+import os
 # Added by Yanzhe
 def retry(max_retries=5, initial_delay=1, backoff_factor=2, exceptions=(Exception,), jitter=False):
     """
@@ -111,6 +112,19 @@ class LiteLLMModel(BaseModelBackend):
             model_type, model_config_dict, api_key, url, token_counter
         )
         self.client = completion
+        if 'azure' in model_type:
+            self.openai_api_key = os.getenv("OPENAI_API_KEY")
+            self.openai_fallback_model = '-'.join(model_type.split('azure/')[-1].split('-')[:-2])
+        if 'deepseek' in model_type:
+            self.client = OpenAI(
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                base_url="https://api.deepseek.com",
+            )
+        elif 'dashscope' in model_type:
+            self.client = OpenAI(
+                api_key=os.getenv("QWEN_API_KEY"),
+                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            )
 
     def _convert_response_from_litellm_to_openai(
         self, response
@@ -167,8 +181,10 @@ class LiteLLMModel(BaseModelBackend):
 
     async def _arun(self) -> None:  # type: ignore[override]
         raise NotImplementedError
+    def _is_content_filter_error(self, error: Exception) -> bool:
+        return "filtered due to the prompt triggering" in str(error)
 
-    @retry(max_retries=16, initial_delay=8, backoff_factor=1.41, exceptions=(OpenAIError, RateLimitError, ValueError, LiteLLMTimeout))
+
     def _run(
         self,
         messages: List[OpenAIMessage],
@@ -184,17 +200,62 @@ class LiteLLMModel(BaseModelBackend):
         Returns:
             ChatCompletion
         """
-        response = self.client(
-            api_key=self._api_key,
-            base_url=self._url,
-            model=self.model_type,
-            messages=messages,
-            tools=tools,
-            **self.model_config_dict,
-        )
-        response = self._convert_response_from_litellm_to_openai(response)
-        return response
-
+        retry_times = 16
+        while retry_times > 0:
+            try:
+                if "deepseek" in self.model_type:
+                    response = self.client.chat.completions.create(
+                        model=self.model_type.split('/')[-1],
+                        messages=messages,
+                        tools=tools,
+                    )
+                elif "dashscope" in self.model_type:
+                    params = {
+                        "model": self.model_type.split('/')[-1],
+                        "messages": messages,
+                        "tools": tools,
+                    }
+                    if "qwen3-32b" in self.model_type:
+                        params["extra_body"] = {
+                            "enable_thinking": False,
+                        }
+                    # print("\nMessages\n", messages)
+                    # print("\nTools\n", tools)
+                    response = self.client.chat.completions.create(
+                        **params
+                    )
+                    # print("\nResponse\n:", response)
+                else:
+                    response = self.client(
+                        api_key=self._api_key,
+                        base_url=self._url,
+                        model=self.model_type,
+                        messages=messages,
+                        tools=tools,
+                        **self.model_config_dict,
+                    )
+                    response = self._convert_response_from_litellm_to_openai(response)
+                return response
+            except Exception as e:
+                print("LiteLLM error: ", e)
+                if 'azure' in self.model_type and self._is_content_filter_error(e):
+                    print(f"Azure content filter triggered, falling back to OpenAI: {e}")
+                    try:
+                        response = self.client(
+                            api_key=self.openai_api_key,
+                            model=self.openai_fallback_model,
+                            messages=messages,
+                            tools=tools,
+                            **self.model_config_dict,
+                        )
+                        response = self._convert_response_from_litellm_to_openai(response)
+                        return response
+                    except Exception as openai_error:
+                        print(f"OpenAI fallback also failed: {openai_error}")
+                        raise e
+            retry_times -= 1
+            time.sleep(1.41 ** (16 - retry_times))
+        raise RuntimeError("Exceeded maximum retry attempts for LiteLLMModel.")
     def check_model_config(self):
         r"""Check whether the model configuration contains any unexpected
         arguments to LiteLLM API.
