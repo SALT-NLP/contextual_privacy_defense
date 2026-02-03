@@ -217,7 +217,6 @@ __marimo__/
 *.txt
 *.err
 *.out
-*.sh
 *.sbatch
 wandb
 debug*
