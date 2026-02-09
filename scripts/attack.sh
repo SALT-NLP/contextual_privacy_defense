@@ -1,0 +1,23 @@
+python search_control.py \
+   --config_dir  example_generation/train \
+   --output_dir example_generation/train_attacked \
+   --example_ids 16 \
+   --search_dir_list train_attacked_16 \
+   --attack_num_examples 5 \
+   --num_tasks 10 \
+   --num_runs 1 \
+   --goal attack \
+   --appless \
+   --num_processes 10 \
+   --max_simulation_round 2 \
+   --keep_bank \
+   --target_exp_result 0.0 \
+   --adaptive_search \
+   --prompt_version v1 \
+   --no_backtrack \
+   --instruct_agent_model unsloth/Qwen3-4B \
+   --instruct_base_url http://localhost:8001/v1 \
+   --data_sender_model gpt-4.1-mini \
+   --data_subject_model gpt-4.1-mini \
+   --data_recipient_model gpt-4.1-mini \
+   --search_agent_model gpt-5

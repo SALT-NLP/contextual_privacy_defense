@@ -1,0 +1,34 @@
+[
+    [
+        "python application.py --host localhost --port 8000 --app-name Gmail --db-folder logs",
+        "Gmail.log"
+    ],
+    [
+        "python application.py --host localhost --port 8001 --app-name Facebook --db-folder logs",
+        "Facebook.log"
+    ],
+    [
+        "python agent.py --host localhost --port 8002 --agent-id agent1 --user-id john_miller --deployment-name gpt-4.1-mini --instruct_agent_model unsloth/Qwen3-4B --instruct_base_url http://jagupard33:8001/v1 --guard_base_url http://localhost:8000/v1",
+        "agent1.log"
+    ],
+    [
+        "python agent.py --host localhost --port 8003 --agent-id agent2 --user-id emily_carter --deployment-name gpt-4.1-mini",
+        "agent2.log"
+    ],
+    [
+        "python agent.py --host localhost --port 8004 --agent-id agent3 --user-id sarah_thompson --deployment-name gpt-4.1-mini",
+        "agent3.log"
+    ],
+    [
+        "python user.py --user-id john_miller --username John Miller --app-host localhost localhost --app-port 8000 8001 --app-name Gmail Facebook --agent-host localhost --agent-port 8002 --agent-id agent1 --init-file data_sender.txt",
+        "data_sender.log"
+    ],
+    [
+        "python user.py --user-id emily_carter --username Emily Carter --app-host localhost localhost --app-port 8000 8001 --app-name Gmail Facebook --agent-host localhost --agent-port 8003 --agent-id agent2 --init-file data_subject.txt",
+        "data_subject.log"
+    ],
+    [
+        "python user.py --user-id sarah_thompson --username Sarah Thompson --app-host localhost --app-port 8001 --app-name Facebook --agent-host localhost --agent-port 8004 --agent-id agent3 --init-file data_recipient.txt",
+        "data_recipient.log"
+    ]
+]
