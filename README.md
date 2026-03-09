@@ -1,10 +1,12 @@
-# [Contextualized Privacy Defense for LLM Agents](coming_soon)
+# Contextualized Privacy Defense for LLM Agents
 
 **Authors:** Yule Wen, Yanzhe Zhang, Jianxun Lian, Xiaoyuan Yi, Xing Xie, Diyi Yang
 
 ## Abstract
 
 Abstract LLM agents increasingly act on users’ personal information, yet existing privacy defenses remain limited in both design and adaptability. Most prior approaches rely on static or passive defenses, such as prompting and guarding. These paradigms are insufficient for supporting contextual, proactive privacy decisions in multi-step agent execution. We propose Contextualized Defense Instructing (CDI), a new privacy defense paradigm in which an instructor model generates step-specific, context-aware privacy guidance during execution, proactively shaping actions rather than merely constraining or vetoing them. Crucially, CDI is paired with an experience-driven optimization framework that trains the instructor via reinforcement learning (RL), where we convert failure trajectories with privacy violations into learning environments. We formalize baseline defenses and CDI as distinct intervention points in a canonical agent loop, and compare their privacy–helpfulness trade-offs within a unified simulation framework. Results show that our CDI consistently achieves a better balance between privacy preservation (94.2%) and helpfulness (80.6%) than baselines, with superior robustness to adversarial conditions and generalization.
+
+[[Paper](https://arxiv.org/abs/2603.02983)]  [[Data](https://huggingface.co/datasets/SALT-NLP/Contextualized_Privacy_Defense_Trajectory)]
 
 ## Architecture
 
@@ -180,6 +182,22 @@ You can modify the training configurations in `scripts/training.yaml`.
 - `dataset_instruct_folder`: Folder containing training examples for instructor model
 - `dataset_guard_folder`: Folder containing training examples for guard model
 - `use_mixed_objective`: Whether to use AD for training instructor model, default use PP
+
+## Citation
+
+If you use our work in your research, please cite:
+
+```bibtex
+@misc{wen2026contextualizedprivacydefensellm,
+      title={Contextualized Privacy Defense for LLM Agents}, 
+      author={Yule Wen and Yanzhe Zhang and Jianxun Lian and Xiaoyuan Yi and Xing Xie and Diyi Yang},
+      year={2026},
+      eprint={2603.02983},
+      archivePrefix={arXiv},
+      primaryClass={cs.CR},
+      url={https://arxiv.org/abs/2603.02983}, 
+}
+```
 
 
 ## Acknowledgments
